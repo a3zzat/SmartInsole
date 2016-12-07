@@ -161,5 +161,6 @@ standard names. */
 #define xPortPendSVHandler PendSV_Handler
 #define xPortSysTickHandler SysTick_Handler
 
+#define configUSE_QUEUE_SETS 1
 #endif /* FREERTOS_CONFIG_H */
 

@@ -57,6 +57,24 @@
 #define MUX_1_ADDR 	0x4C
 #define MUX_2_ADDR  0x4D
 
+/* Define the lengths of the queues that will be added to the queue set. */
+#define QUEUE_LENGTH_1		(10)
+#define QUEUE_LENGTH_2		(10)
+
+/* Binary semaphores have an effective length of 1. */
+#define BINARY_SEMAPHORE_LENGTH	1
+
+/* Define the size of the item to be held by queue 1 and queue 2 respectively.
+The values used here are just for demonstration purposes. */
+#define ITEM_SIZE_QUEUE_1	sizeof( circBuf_t )
+#define ITEM_SIZE_QUEUE_2	sizeof( circBuf_t )
+
+/* The combined length of the two queues and binary semaphore that will be
+added to the queue set. */
+#define COMBINED_LENGTH ( QUEUE_LENGTH_1 + \
+                          QUEUE_LENGTH_2 + \
+                          BINARY_SEMAPHORE_LENGTH )
+
 /*GLOBALS*/
 int mux_LUTs[] = {0x00,0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80};
 typedef struct DATA_PACKET {
@@ -89,43 +107,9 @@ CIRCBUF_DEF(bufPiz2,MAX_LEN);
 CIRCBUF_DEF(bufAcc1,MAX_LEN);
 CIRCBUF_DEF(bufAcc2,MAX_LEN);
 
-
-//Semaphores
-xSemaphoreHandle Comm_Sem = 0;
-xSemaphoreHandle Piezo_Sem = 0;
-xSemaphoreHandle Acc_Sem = 0;
-
-//Software Timer
-TimerHandle_t Timer1KHz;
-TimerHandle_t TimerPiz;
-TimerHandle_t TimerACC;
-
 // queue
-QueueHandle_t xQueueACC;
-QueueHandle_t xQueuePiz;
 
-
-//Software Timer callback function
-void Comm_Unblock(TimerHandle_t xTimer)
-{
-	xSemaphoreGive (Comm_Sem);
-	//xSemaphoreGiveFromISR(Comm_Sem);
-	TM_USART_Puts(USART6,"Timer triggered.\n");
-}
-
-void ACC_Unblock(TimerHandle_t xTimer)
-{
-	xSemaphoreGive (Acc_Sem);
-	//xSemaphoreGiveFromISR(Comm_Sem);
-	TM_USART_Puts(USART6,"ACC Task triggered.\n");
-}
-
-void Piz_Unblock(TimerHandle_t xTimer)
-{
-	xSemaphoreGive (Piezo_Sem);
-	//xSemaphoreGiveFromISR(Comm_Sem);
-	TM_USART_Puts(USART6,"ACC Task triggered.\n");
-}
+QueueHandle_t xQueueACC, xQueuePiz, xSemaphore;
 
 void Send(circBuf_t* buf)
 {
@@ -135,48 +119,89 @@ void Send(circBuf_t* buf)
 //Tasks
 void Communication(void * pvParameters)
 {
-	circBuf_t* Abuf = 0;
-	circBuf_t* Pbuf = 0;
+
+
+	 TickType_t xLastWakeTime;
+	 const TickType_t xFrequency = 10;
+
+	 // Initialise the xLastWakeTime variable with the current time.
+	 xLastWakeTime = xTaskGetTickCount();
+
+
+	 static QueueSetHandle_t xQueueSet;
+
+	 QueueSetMemberHandle_t xActivatedMember;
+	 circBuf_t xReceivedFromQueueACC;
+	 circBuf_t xReceivedFromQueuePiezo;
+
+	     /* Create the queue set large enough to hold an event for every space in
+	     every queue and semaphore that is to be added to the set. */
+	     xQueueSet = xQueueCreateSet( COMBINED_LENGTH );
+
+	     /* Create the queues and semaphores that will be contained in the set. */
+	     xQueueACC = xQueueCreate( QUEUE_LENGTH_1, ITEM_SIZE_QUEUE_1 );
+	     xQueuePiz = xQueueCreate( QUEUE_LENGTH_2, ITEM_SIZE_QUEUE_2 );
+
+	     /* Create the semaphore that is being added to the set. */
+	     xSemaphore = xSemaphoreCreateBinary();
+
+	     /* Check everything was created. */
+	     configASSERT( xQueueSet );
+	     configASSERT( xQueueACC );
+	     configASSERT( xQueuePiz );
+	     configASSERT( xSemaphore );
+
+	     /* Add the queues and semaphores to the set.  Reading from these queues and
+	     semaphore can only be performed after a call to xQueueSelectFromSet() has
+	     returned the queue or semaphore handle from this point on. */
+	     xQueueAddToSet( xQueueACC, xQueueSet );
+	     xQueueAddToSet( xQueuePiz, xQueueSet );
+	     xQueueAddToSet( xSemaphore, xQueueSet );
 
 	while(1)
 	{
-		if(xSemaphoreTake(Comm_Sem, portMAX_DELAY))
-		{
-			TM_USART_Puts(USART6,"Communication running.\n");
-			TM_DISCO_LedToggle(LED_GREEN);
 
-			//CODE
-			if( xQueuePiz != 0 )
-			{
-				// Receive a message on the created queue.  Block for 10 ticks if a
-				// message is not immediately available.
-				if( xQueueReceive( xQueuePiz, ( Pbuf ), ( TickType_t ) 01 ) )
-				{
-					// pcRxedMessage now points to the struct AMessage variable posted
-					// by vATask.
-					Send(Pbuf);
-				}
-			}
+  // Wait for the next cycle.
+	 vTaskDelayUntil( &xLastWakeTime, xFrequency );
 
-			//CODE
-			if( xQueueACC != 0 )
-			{
-				// Receive a message on the created queue.  Block for 10 ticks if a
-				// message is not immediately available.
-				if( xQueueReceive( xQueueACC, ( Abuf ), ( TickType_t ) 00 ) )
-				{
-					// pcRxedMessage now points to the struct AMessage variable posted
-					// by vATask.
-					Send(Pbuf);
-				}
-			}
+//			TM_USART_Puts(USART6,"Communication running.\n");
+//			TM_DISCO_LedToggle(LED_GREEN);
+//
+//			TM_DISCO_LedToggle(LED_GREEN);
+//			TM_USART_Puts(USART6,"	-> Communication Done.\n");
 
-			TM_DISCO_LedToggle(LED_GREEN);
-			TM_USART_Puts(USART6,"	-> Communication Done.\n");
+	 /* Block to wait for something to be available from the queues or
+		 semaphore that have been added to the set.  Don't block longer than
+		 200ms. */
+		 xActivatedMember = xQueueSelectFromSet( xQueueSet,
+												 200 / portTICK_PERIOD_MS );
 
-			xSemaphoreGive (Comm_Sem);
+		 /* Which set member was selected?  Receives/takes can use a block time
+		 of zero as they are guaranteed to pass because xQueueSelectFromSet()
+		 would not have returned the handle unless something was available. */
+		 if( xActivatedMember == xQueueACC )
+		 {
+			 xQueueReceive( xActivatedMember, &xReceivedFromQueueACC, 0 );
 
-		}
+			 Send(&xReceivedFromQueueACC);
+		 }
+		 else if( xActivatedMember == xQueuePiz )
+		 {
+			 xQueueReceive( xActivatedMember, &xReceivedFromQueuePiezo, 0 );
+			 Send(&xReceivedFromQueuePiezo);
+		 }
+		 else if( xActivatedMember == xSemaphore )
+		 {
+			 /* Take the semaphore to make sure it can be "given" again. */
+			 xSemaphoreTake( xActivatedMember, 0 );
+			 //vProcessEventNotifiedBySemaphore();
+			 break;
+		 }
+		 else
+		 {
+			 /* The 200ms block time expired without an RTOS queue or semaphore
+			 being ready to process. */
+		 }
 	}
 }
 void fillABuf(circBuf_t* buf)
@@ -197,9 +222,12 @@ void fillPBuf(circBuf_t* buf)
 void Piezo(void * pvParameters)
 {
 	uint8_t buf_cnt=0;
+//	 TickType_t xLastWakeTime;
+//	 const TickType_t xFrequency = PIEZO_FREQ;
+//
+//	 // Initialise the xLastWakeTime variable with the current time.
+//	 xLastWakeTime = xTaskGetTickCount();
 
-
-	xQueuePiz = xQueueCreate( 10, sizeof( circBuf_t ) );
 
 	while(1)
 	{
@@ -238,23 +266,25 @@ void Piezo(void * pvParameters)
 
 		TM_USART_Puts(USART6,"	-> Piezo done.\n");
 		TM_DISCO_LedToggle(LED_ORANGE);
-		xSemaphoreGive (Piezo_Sem);
 
 	}
 
 }
 
+
+
 void Accelerometer(void * pvParameters)
 {
 	uint8_t buf_cnt=0;
 
-
-	xQueueACC = xQueueCreate( 10, sizeof( circBuf_t ) );
+//	 TickType_t xLastWakeTime;
+//	 const TickType_t xFrequency = ACC_FREQ;
+//
+//	 // Initialise the xLastWakeTime variable with the current time.
+//	 xLastWakeTime = xTaskGetTickCount();
 
 	while(1)
 	{
-		if(xSemaphoreTake(Acc_Sem, portMAX_DELAY))
-		{
 			TM_USART_Puts(USART6,"Accelerometer running.\n");
 			TM_DISCO_LedToggle(LED_BLUE);
 
@@ -287,9 +317,8 @@ void Accelerometer(void * pvParameters)
 
 			TM_USART_Puts(USART6,"	-> Accelerometer done.\n");
 			TM_DISCO_LedToggle(LED_BLUE);
-			xSemaphoreGive (Acc_Sem);
 
-		}
+
 	}
 
 }
@@ -301,54 +330,21 @@ int main(void)
 	TM_DISCO_LedInit();
 	TM_DISCO_LedOn(LED_ALL);
 
-	//Create Semaphores
-	vSemaphoreCreateBinary(Comm_Sem);
-	vSemaphoreCreateBinary(Piezo_Sem);
-	vSemaphoreCreateBinary(Acc_Sem);
-
-	// create Queue
-
-	//Create Timers
-	Timer1KHz = xTimerCreate("Timer1KHz", pdMS_TO_TICKS(1000), pdTRUE, 0, Comm_Unblock);
-	//Create Timers
-	TimerACC = xTimerCreate("Timer1KHz", pdMS_TO_TICKS(1000), pdTRUE, 0, ACC_Unblock);
-	//Create Timers
-	TimerPiz = xTimerCreate("Timer1KHz", pdMS_TO_TICKS(1000), pdTRUE, 0, Piz_Unblock);
-
-	if(Timer1KHz == NULL)
-	{
-		TM_USART_Puts(USART6,"Timer was note created.\n");
-	}else
-	{
-		if(xTimerStart(Timer1KHz,0) != pdPASS)
-		{
-			TM_USART_Puts(USART6,"Timer1KHz did not get into an active state.\n");
-		}else
-		{
-			TM_USART_Puts(USART6,"Timer1KHz created successfully.\nTimer1KHz started successfully.\n");
-		}
-	}
-
 	//Task Creation
-	xTaskCreate(Communication, (signed char*)"Communication",configMINIMAL_STACK_SIZE,NULL,1,NULL);
-	xTaskCreate(Piezo, (signed char*)"Piezo",configMINIMAL_STACK_SIZE,NULL,1,NULL);
-	xTaskCreate(Accelerometer, (signed char*)"Accelerometer",configMINIMAL_STACK_SIZE,NULL,1,NULL);
+	xTaskCreate(Communication, (char*)"Communication",configMINIMAL_STACK_SIZE,NULL,1,NULL);
+	xTaskCreate(Piezo, (char*)"Piezo",configMINIMAL_STACK_SIZE,NULL,1,NULL);
+	xTaskCreate(Accelerometer, (char*)"Accelerometer",configMINIMAL_STACK_SIZE,NULL,1,NULL);
 
 	//Start the scheduler
 	TM_USART_Puts(USART6,"Started.\n");
 	TM_DISCO_LedToggle(LED_RED);
-	xSemaphoreGive (Piezo_Sem);
-	xSemaphoreGive (Acc_Sem);
 	vTaskStartScheduler();
+
 	while(1){
 
 	}
 
 }
-
-
-
-
 
 
 ///* QUEUE MANAGEMENT */
