@@ -1,4 +1,3 @@
-
 /**
  ******************************************************************************
  * @file    main.c
@@ -75,9 +74,9 @@ added to the queue set. */
                           QUEUE_LENGTH_2 + \
                           BINARY_SEMAPHORE_LENGTH )
 
-#define COMM_FREQ 10
-#define ACC_FREQ 10
-#define PIEZO_FREQ 10
+#define COMM_FREQ 100
+#define ACC_FREQ 100
+#define PIEZO_FREQ 100
 
 /*GLOBALS*/
 int mux_LUTs[] = {0x00,0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80};
@@ -93,8 +92,10 @@ typedef struct DATA_PACKET {
 } DATA_PACKET;
 
 /*VARIABLES DEFINITIONS*/
-#define MAX_LEN 30
+#define MAX_ACC_LEN 6
+#define MAX_ADC_LEN 8
 #define MAX_BUF_count 2
+
 
 typedef struct
 {	int16_t * const buffer;
@@ -105,30 +106,44 @@ int maxLen;
 
 #define CIRCBUF_DEF(x,y) int16_t x##_space[y]; circBuf_t x = { x##_space,0,0,y}
 
-CIRCBUF_DEF(bufPiz1_1,MAX_LEN);
-CIRCBUF_DEF(bufPiz1_2,MAX_LEN);
-CIRCBUF_DEF(bufPiz2_1,MAX_LEN);
-CIRCBUF_DEF(bufPiz2_2,MAX_LEN);
+CIRCBUF_DEF(bufPiz1_1,MAX_ADC_LEN);
+CIRCBUF_DEF(bufPiz1_2,MAX_ADC_LEN);
+CIRCBUF_DEF(bufPiz2_1,MAX_ADC_LEN);
+CIRCBUF_DEF(bufPiz2_2,MAX_ADC_LEN);
 
-CIRCBUF_DEF(bufAcc1_1,MAX_LEN);
-CIRCBUF_DEF(bufAcc1_2,MAX_LEN);
-CIRCBUF_DEF(bufAcc2_1,MAX_LEN);
-CIRCBUF_DEF(bufAcc2_2,MAX_LEN);
+CIRCBUF_DEF(bufAcc1_1,MAX_ACC_LEN);
+CIRCBUF_DEF(bufAcc1_2,MAX_ACC_LEN);
+CIRCBUF_DEF(bufAcc2_1,MAX_ACC_LEN);
+CIRCBUF_DEF(bufAcc2_2,MAX_ACC_LEN);
 
 
 // queue
 
 QueueHandle_t xQueueACC, xQueuePiz, xSemaphore;
 
+
+/*Accelerometer data conversion function*/
+
+int16_t toSignedInt(unsigned int value, int bitLength)
+{
+	int signedValue = value;
+	if (value >> (bitLength - 1))
+		signedValue |= -1 << bitLength;
+	return signedValue;
+}
+
+
 void Send(circBuf_t* buf)
 {
 	// send data
+	// TM_USART_Puts(USART6,"	-> Send.\n");
+		TM_USART_Send(USART6,(uint8_t*)buf->buffer,MAX_ADC_LEN*2);
+
 }
 
 //Tasks
 void Communication(void * pvParameters)
 {
-
 
 	 TickType_t xLastWakeTime;
 	 const TickType_t xFrequency = COMM_FREQ;
@@ -171,7 +186,7 @@ void Communication(void * pvParameters)
 	{
 
   // Wait for the next cycle.
-	 vTaskDelayUntil( &xLastWakeTime, xFrequency );
+//	 vTaskDelayUntil( &xLastWakeTime, xFrequency );
 
 			TM_USART_Puts(USART6,"Communication running.\n");
 			TM_DISCO_LedToggle(LED_GREEN);
@@ -214,8 +229,13 @@ void Communication(void * pvParameters)
 }
 void fillABuf(circBuf_t* buf1,circBuf_t* buf2)
 {
-	int8_t ACC1_samples[6];
-	int8_t ACC2_samples[6];
+	uint8_t ACC1_samples[6];
+	uint8_t ACC2_samples[6];
+	uint16_t x1_cmp,y1_cmp,z1_cmp;
+	uint16_t x2_cmp,y2_cmp,z2_cmp;
+
+	int16_t x1,y1,z1;
+	int16_t x2,y2,z2;
 
 	// fill operation
 	//CODE
@@ -231,21 +251,81 @@ void fillABuf(circBuf_t* buf1,circBuf_t* buf2)
 	 TM_I2C_ReadMulti(I2C1,READ_ACC_2,DATAX0,ACC2_samples,6);
 	 }
 	 //X
-	 buf1->buffer[0] = ((int16_t)ACC1_samples[1] <<8) | ACC1_samples[0];
-	 buf2->buffer[0] = ((int16_t)ACC2_samples[1] <<8) | ACC2_samples[0];
+	 x1_cmp = ((int16_t)ACC1_samples[1] <<8) | ACC1_samples[0];
+	 x2_cmp = ((int16_t)ACC2_samples[1] <<8) | ACC2_samples[0];
 	 //Y
-	 buf1->buffer[1] = ((int16_t)ACC1_samples[3] <<8) | ACC1_samples[2];
-	 buf2->buffer[1] = ((int16_t)ACC2_samples[3] <<8) | ACC2_samples[2];
+	 y1_cmp = ((int16_t)ACC1_samples[3] <<8) | ACC1_samples[2];
+	 y2_cmp = ((int16_t)ACC2_samples[3] <<8) | ACC2_samples[2];
 	//Z
-	 buf1->buffer[1] = ((int16_t)ACC1_samples[5] <<8) | ACC1_samples[4];
-	 buf2->buffer[1] = ((int16_t)ACC2_samples[5] <<8) | ACC2_samples[4];
+	 z1_cmp = ((int16_t)ACC1_samples[5] <<8) | ACC1_samples[4];
+	 z2_cmp = ((int16_t)ACC2_samples[5] <<8) | ACC2_samples[4];
+
+	 //X
+	 x1 = toSignedInt(x1_cmp,16);
+	 x2 = toSignedInt(x2_cmp,16);
+	 //Y
+	 y1 = toSignedInt(y1_cmp,16);
+	 y2 = toSignedInt(y2_cmp,16);
+	//Z
+	 z1 = toSignedInt(z1_cmp,16);
+	 z2 = toSignedInt(z2_cmp,16);
+
+	 //X
+	 buf1->buffer[0] = x1;
+	 buf2->buffer[0] = x2;
+	 //Y
+	 buf1->buffer[1] = y1;
+	 buf2->buffer[1] = y2;
+	//Z
+	 buf1->buffer[2] = z1;
+	 buf2->buffer[2] = z2;
+
+}
+
+void changeMux(int8_t num, int8_t val)
+{
+	if (num == 0)
+	{
+		if(val & 1)
+		{
+			GPIO_SetBits(GPIOE, GPIO_Pin_2);
+		}
+		else
+		{
+			GPIO_ResetBits(GPIOE, GPIO_Pin_2);
+		}
+
+		if(val & 2)
+		{
+			GPIO_SetBits(GPIOE, GPIO_Pin_4);
+		}
+		else
+		{
+			GPIO_ResetBits(GPIOE, GPIO_Pin_4);
+		}
+
+		if(val & 4)
+		{
+			GPIO_SetBits(GPIOE, GPIO_Pin_6);
+		}
+		else
+		{
+			GPIO_ResetBits(GPIOE, GPIO_Pin_6);
+		}
+	}
 
 }
 
 void fillPBuf(circBuf_t* buf1,circBuf_t* buf2)
 {
-	// fill operation
-
+	uint8_t i=0;
+	for(i=0;i<8;i++);
+	{
+		changeMux(0,i);
+		changeMux(1,i);
+		buf1->buffer[i] = TM_ADC_Read(ADC1, i);
+		buf2->buffer[i] = TM_ADC_Read(ADC2, i);
+	}
 
 }
 
@@ -262,13 +342,13 @@ void Piezo(void * pvParameters)
 
 	while(1)
 	{
-		 vTaskDelayUntil( &xLastWakeTime, xFrequency );
+//		 vTaskDelayUntil( &xLastWakeTime, xFrequency );
 
 		TM_USART_Puts(USART6,"Piezo running.\n");
 
 		TM_DISCO_LedToggle(LED_ORANGE);
 
-		//CODE
+//		//CODE
 		switch(buf_cnt)
 		{
 		case 0:
@@ -320,7 +400,8 @@ void Piezo(void * pvParameters)
 void Accelerometer(void * pvParameters)
 {
 	uint8_t buf_cnt=0;
-
+	int16_t buffer[2*MAX_ACC_LEN];
+	int16_t buffer2[2*MAX_ACC_LEN];
 	 TickType_t xLastWakeTime;
 	 const TickType_t xFrequency = ACC_FREQ;
 
@@ -329,7 +410,7 @@ void Accelerometer(void * pvParameters)
 
 	while(1)
 	{
-		 vTaskDelayUntil( &xLastWakeTime, xFrequency );
+//		 vTaskDelayUntil( &xLastWakeTime, xFrequency );
 			TM_USART_Puts(USART6,"Accelerometer running.\n");
 			TM_DISCO_LedToggle(LED_BLUE);
 
@@ -338,6 +419,8 @@ void Accelerometer(void * pvParameters)
 			{
 			case 0:
 				fillABuf(&bufAcc1_1,&bufAcc1_2);
+//				memcpy(buffer,bufAcc1_1.buffer,MAX_LEN*sizeof(int16_t));
+//				memcpy(&buffer[MAX_LEN],bufAcc1_2.buffer,MAX_LEN*sizeof(int16_t));
 
 				buf_cnt = 1;
 				/* Send an unsigned long.  Wait for 10 ticks for space to become
@@ -348,22 +431,30 @@ void Accelerometer(void * pvParameters)
 				{
 					/* Failed to post the message, even after 10 ticks. */
 				}
+
 				if( xQueueSend( xQueueACC,
 						( void * ) &bufAcc1_2,
 						( TickType_t ) 0 ) != pdPASS )
 				{
 					/* Failed to post the message, even after 10 ticks. */
 				}
+
+
 				break;
 			case 1:
 				fillABuf(&bufAcc2_1,&bufAcc2_2);
+//				memcpy(buffer2,bufAcc2_1.buffer,MAX_LEN*sizeof(int16_t)/2);
+//				memcpy(&buffer2[MAX_LEN],bufAcc2_2.buffer,MAX_LEN*sizeof(int16_t)/2);
+
 				buf_cnt = 0;
+				/* Send an unsigned long.  Wait for 10 ticks for space to become
+					       available if necessary. */
 				if( xQueueSend( xQueueACC,
-						( void * ) &bufAcc2_1,
-						( TickType_t ) 0 ) != pdPASS )
-				{
-					/* Failed to post the message, even after 10 ticks. */
-				}
+										( void * ) &bufAcc2_1,
+										( TickType_t ) 0 ) != pdPASS )
+								{
+									/* Failed to post the message, even after 10 ticks. */
+								}
 				if( xQueueSend( xQueueACC,
 						( void * ) &bufAcc2_2,
 						( TickType_t ) 0 ) != pdPASS )
@@ -384,9 +475,25 @@ void Accelerometer(void * pvParameters)
 int main(void)
 {
 	//Initialization
-	TM_USART_Init(USART6,TM_USART_PinsPack_1,115200);
-	TM_DISCO_LedInit();
-	TM_DISCO_LedOn(LED_ALL);
+		//UART
+		TM_USART_Init(USART6,TM_USART_PinsPack_1,115200);
+		//LED
+		TM_DISCO_LedInit();
+		TM_DISCO_LedOn(LED_ALL);
+		// init ADC
+		TM_ADC_InitADC(ADC1);
+		TM_ADC_InitADC(ADC2);
+		// GPIO
+		GPIO_InitTypeDef GPIO_InitDef;
+
+		GPIO_InitDef.GPIO_Pin = GPIO_Pin_2 | GPIO_Pin_4 | GPIO_Pin_6;
+		GPIO_InitDef.GPIO_Mode = GPIO_Mode_OUT;
+		GPIO_InitDef.GPIO_OType = GPIO_OType_PP;
+		GPIO_InitDef.GPIO_PuPd = GPIO_PuPd_NOPULL;
+		GPIO_InitDef.GPIO_Speed = GPIO_Speed_100MHz;
+		//Initialize pins
+		GPIO_Init(GPIOE, &GPIO_InitDef);
+
 
 	//Task Creation
 	xTaskCreate(Communication, (char*)"Communication",configMINIMAL_STACK_SIZE,NULL,1,NULL);
@@ -582,4 +689,7 @@ int main(void)
 //	TM_USART_Puts(USART6,"TIMER_CALLBACK\n");
 //	//xSemaphoreGive(COMMUNICATION_SEM);
 //}
+
+
+
 
