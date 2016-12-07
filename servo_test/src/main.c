@@ -75,6 +75,10 @@ added to the queue set. */
                           QUEUE_LENGTH_2 + \
                           BINARY_SEMAPHORE_LENGTH )
 
+#define COMM_FREQ 10
+#define ACC_FREQ 10
+#define PIEZO_FREQ 10
+
 /*GLOBALS*/
 int mux_LUTs[] = {0x00,0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80};
 typedef struct DATA_PACKET {
@@ -101,11 +105,16 @@ int maxLen;
 
 #define CIRCBUF_DEF(x,y) int16_t x##_space[y]; circBuf_t x = { x##_space,0,0,y}
 
-CIRCBUF_DEF(bufPiz1,MAX_LEN);
-CIRCBUF_DEF(bufPiz2,MAX_LEN);
+CIRCBUF_DEF(bufPiz1_1,MAX_LEN);
+CIRCBUF_DEF(bufPiz1_2,MAX_LEN);
+CIRCBUF_DEF(bufPiz2_1,MAX_LEN);
+CIRCBUF_DEF(bufPiz2_2,MAX_LEN);
 
-CIRCBUF_DEF(bufAcc1,MAX_LEN);
-CIRCBUF_DEF(bufAcc2,MAX_LEN);
+CIRCBUF_DEF(bufAcc1_1,MAX_LEN);
+CIRCBUF_DEF(bufAcc1_2,MAX_LEN);
+CIRCBUF_DEF(bufAcc2_1,MAX_LEN);
+CIRCBUF_DEF(bufAcc2_2,MAX_LEN);
+
 
 // queue
 
@@ -122,7 +131,7 @@ void Communication(void * pvParameters)
 
 
 	 TickType_t xLastWakeTime;
-	 const TickType_t xFrequency = 10;
+	 const TickType_t xFrequency = COMM_FREQ;
 
 	 // Initialise the xLastWakeTime variable with the current time.
 	 xLastWakeTime = xTaskGetTickCount();
@@ -164,11 +173,8 @@ void Communication(void * pvParameters)
   // Wait for the next cycle.
 	 vTaskDelayUntil( &xLastWakeTime, xFrequency );
 
-//			TM_USART_Puts(USART6,"Communication running.\n");
-//			TM_DISCO_LedToggle(LED_GREEN);
-//
-//			TM_DISCO_LedToggle(LED_GREEN);
-//			TM_USART_Puts(USART6,"	-> Communication Done.\n");
+			TM_USART_Puts(USART6,"Communication running.\n");
+			TM_DISCO_LedToggle(LED_GREEN);
 
 	 /* Block to wait for something to be available from the queues or
 		 semaphore that have been added to the set.  Don't block longer than
@@ -202,16 +208,41 @@ void Communication(void * pvParameters)
 			 /* The 200ms block time expired without an RTOS queue or semaphore
 			 being ready to process. */
 		 }
+		 TM_DISCO_LedToggle(LED_GREEN);
+		 TM_USART_Puts(USART6,"	-> Communication Done.\n");
 	}
 }
-void fillABuf(circBuf_t* buf)
+void fillABuf(circBuf_t* buf1,circBuf_t* buf2)
 {
-	// fill operation
+	int8_t ACC1_samples[6];
+	int8_t ACC2_samples[6];
 
+	// fill operation
+	//CODE
+	 if(TM_I2C_IsDeviceConnected(I2C1, READ_ACC_1) > 0)
+	 {
+	 TM_USART_Puts(USART6,"Accelerometer 1 connected.\n");
+	 TM_I2C_ReadMulti(I2C1,READ_ACC_1,DATAX0,ACC1_samples,6);
+	 }
+
+	 if(TM_I2C_IsDeviceConnected(I2C1, READ_ACC_2) > 0)
+	 {
+	 TM_USART_Puts(USART6,"Accelerometer 2 connected.\n");
+	 TM_I2C_ReadMulti(I2C1,READ_ACC_2,DATAX0,ACC2_samples,6);
+	 }
+	 //X
+	 buf1->buffer[0] = ((int16_t)ACC1_samples[1] <<8) | ACC1_samples[0];
+	 buf2->buffer[0] = ((int16_t)ACC2_samples[1] <<8) | ACC2_samples[0];
+	 //Y
+	 buf1->buffer[1] = ((int16_t)ACC1_samples[3] <<8) | ACC1_samples[2];
+	 buf2->buffer[1] = ((int16_t)ACC2_samples[3] <<8) | ACC2_samples[2];
+	//Z
+	 buf1->buffer[1] = ((int16_t)ACC1_samples[5] <<8) | ACC1_samples[4];
+	 buf2->buffer[1] = ((int16_t)ACC2_samples[5] <<8) | ACC2_samples[4];
 
 }
 
-void fillPBuf(circBuf_t* buf)
+void fillPBuf(circBuf_t* buf1,circBuf_t* buf2)
 {
 	// fill operation
 
@@ -222,17 +253,18 @@ void fillPBuf(circBuf_t* buf)
 void Piezo(void * pvParameters)
 {
 	uint8_t buf_cnt=0;
-//	 TickType_t xLastWakeTime;
-//	 const TickType_t xFrequency = PIEZO_FREQ;
-//
-//	 // Initialise the xLastWakeTime variable with the current time.
-//	 xLastWakeTime = xTaskGetTickCount();
+	 TickType_t xLastWakeTime;
+	 const TickType_t xFrequency = PIEZO_FREQ;
+
+	 // Initialise the xLastWakeTime variable with the current time.
+	 xLastWakeTime = xTaskGetTickCount();
 
 
 	while(1)
 	{
+		 vTaskDelayUntil( &xLastWakeTime, xFrequency );
 
-		//TM_USART_Puts(USART6,"Piezo running.\n");
+		TM_USART_Puts(USART6,"Piezo running.\n");
 
 		TM_DISCO_LedToggle(LED_ORANGE);
 
@@ -240,22 +272,34 @@ void Piezo(void * pvParameters)
 		switch(buf_cnt)
 		{
 		case 0:
-			fillPBuf(&bufPiz1);
+			fillPBuf(&bufPiz1_1,&bufPiz1_2);
 			buf_cnt = 1;
 			/* Send an unsigned long.  Wait for 10 ticks for space to become
 				       available if necessary. */
 			if( xQueueSend( xQueuePiz,
-					( void * ) &bufPiz1,
+					( void * ) &bufPiz1_1,
+					( TickType_t ) 0 ) != pdPASS )
+			{
+				/* Failed to post the message, even after 10 ticks. */
+			}
+			if( xQueueSend( xQueuePiz,
+					( void * ) &bufPiz1_2,
 					( TickType_t ) 0 ) != pdPASS )
 			{
 				/* Failed to post the message, even after 10 ticks. */
 			}
 			break;
 		case 1:
-			fillPBuf(&bufPiz2);
+			fillPBuf(&bufPiz2_1,&bufPiz2_2);
 			buf_cnt = 0;
 			if( xQueueSend( xQueuePiz,
-					( void * ) &bufPiz2,
+					( void * ) &bufPiz2_1,
+					( TickType_t ) 0 ) != pdPASS )
+			{
+				/* Failed to post the message, even after 10 ticks. */
+			}
+			if( xQueueSend( xQueuePiz,
+					( void * ) &bufPiz2_2,
 					( TickType_t ) 0 ) != pdPASS )
 			{
 				/* Failed to post the message, even after 10 ticks. */
@@ -277,14 +321,15 @@ void Accelerometer(void * pvParameters)
 {
 	uint8_t buf_cnt=0;
 
-//	 TickType_t xLastWakeTime;
-//	 const TickType_t xFrequency = ACC_FREQ;
-//
-//	 // Initialise the xLastWakeTime variable with the current time.
-//	 xLastWakeTime = xTaskGetTickCount();
+	 TickType_t xLastWakeTime;
+	 const TickType_t xFrequency = ACC_FREQ;
+
+	 // Initialise the xLastWakeTime variable with the current time.
+	 xLastWakeTime = xTaskGetTickCount();
 
 	while(1)
 	{
+		 vTaskDelayUntil( &xLastWakeTime, xFrequency );
 			TM_USART_Puts(USART6,"Accelerometer running.\n");
 			TM_DISCO_LedToggle(LED_BLUE);
 
@@ -292,22 +337,35 @@ void Accelerometer(void * pvParameters)
 			switch(buf_cnt)
 			{
 			case 0:
-				fillABuf(&bufAcc1);
+				fillABuf(&bufAcc1_1,&bufAcc1_2);
+
 				buf_cnt = 1;
 				/* Send an unsigned long.  Wait for 10 ticks for space to become
 					       available if necessary. */
 				if( xQueueSend( xQueueACC,
-						( void * ) &bufAcc1,
+						( void * ) &bufAcc1_1,
+						( TickType_t ) 0 ) != pdPASS )
+				{
+					/* Failed to post the message, even after 10 ticks. */
+				}
+				if( xQueueSend( xQueueACC,
+						( void * ) &bufAcc1_2,
 						( TickType_t ) 0 ) != pdPASS )
 				{
 					/* Failed to post the message, even after 10 ticks. */
 				}
 				break;
 			case 1:
-				fillABuf(&bufAcc2);
+				fillABuf(&bufAcc2_1,&bufAcc2_2);
 				buf_cnt = 0;
 				if( xQueueSend( xQueueACC,
-						( void * ) &bufAcc2,
+						( void * ) &bufAcc2_1,
+						( TickType_t ) 0 ) != pdPASS )
+				{
+					/* Failed to post the message, even after 10 ticks. */
+				}
+				if( xQueueSend( xQueueACC,
+						( void * ) &bufAcc2_2,
 						( TickType_t ) 0 ) != pdPASS )
 				{
 					/* Failed to post the message, even after 10 ticks. */
